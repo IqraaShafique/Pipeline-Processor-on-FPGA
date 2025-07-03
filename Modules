@@ -1,0 +1,1032 @@
+////As it is a pipline processor so we need to save each state or you can say pass each state to next level bcx upon clock everything gets updated on that module and you will no longer be able to access previusly modified variables///
+
+///////////////////////////////////HAZARDOUS PIPELINE/////////////////////////////////
+
+///////////////////////////////BASIC PIPELINE PROCESSOR///////////////////////////////
+
+//PROGRAM COUNTER//
+module Program_Counter#(parameter p_size = 32,a_size=32) (
+  input clk,rst,PC_write,IF_flush,pc_jump,pc_branch,alu_zero,
+  input [a_size-1:0] j_address,br_address,
+  output reg [p_size-1:0] pc
+);
+  //Always block triggered on the rising edge of the clock or a high reset signal
+   always @(posedge clk, posedge rst) 
+     begin
+       if (rst)
+            pc <= 0;                      //If reset is high, set PC to 0, usyally aat start to avoid any garbage value
+       else if(IF_flush==1'b1)
+          begin
+            if(pc_jump == 1'b1)
+              pc <= j_address;             //If jump signal is high, set PC to jump address
+            else if(pc_branch == 1'b1 && alu_zero == 1'b1)
+              pc <= br_address;            //If branch signal and ALU zero are high, set PC to branch address
+          end
+       else if(PC_write==1'b1)
+              pc <= pc + 1;                //If PC_write is high,such as there is not stall so, increment PC by 1
+       else
+              pc <= pc;                    //Otherwise, retain the current PC value in case of  stall
+    end
+endmodule
+
+//INSTRUCTION MEMORY//
+module Instruction_Memory#(parameter p_size = 32,i_size=32,depth=32) (
+  input clk, rst,
+  input [p_size-1:0] pc,
+  output [i_size-1:0] im_Instruction
+);
+   //size of instruction i_size=32;                     
+   //number of instructions depth=32;                    
+    
+  reg [i_size-1:0] ROM [depth-1:0]; // ROM  array containing instructions
+
+    // Initializing ROM with instructions
+    initial 
+      begin
+        //in instruction it is rs,rt,rd,shamt,function
+        //rd,rs,rt in for rtype,
+        //for itype it is  rt,rs(constant)
+        //branch- rs,rt,address
+        //jump just to adress
+        ROM[0]  = 32'b000000_00000_00000_00000_00000_000000;      //nop 
+
+        ROM[1]  = 32'b000000_00010_00001_00001_00000_100000;      //add $1,$1,$2
+        ROM[2]  = 32'b000000_00101_00001_00100_00000_100010;      //sub $4,$5,$1 (data dependences rt2=rd1)
+        
+        ROM[3]  = 32'b000000_00010_00001_00100_00000_100100;      //and $4,$2,$1
+        
+        ROM[4]  = 32'b000000_00010_00001_00101_00000_100101;      //or  $5,$2,$1
+        ROM[5]  = 32'b000000_00010_00101_00110_00010_101010;      //slt $6,$2,$5 (data dependence  rt2=rd1)
+        
+        ROM[6]  = 32'b000000_00010_00001_00011_00010_101010;      //add $3,$2,$1       
+        ROM[7]  = 32'b000001_00011_00000_0000000000000101;        //lw  $0,$3(5) (dependency between rtype and lw)
+        
+        ROM[8]  = 32'b000011_00100_00001_0000000000000011;        //beq $4,$1,3 (not applied)
+
+        ROM[9]  = 32'b000100_00000000000000000000000010;          //jump (to pc+2 without sll)  
+        
+        ROM[10]  = 32'b000010_00111_00001_0000000000000111;        //sw $1,$7(7)
+        ROM[11]  = 32'b000001_00011_00001_0000000000000001;        //lw $1,$3(1) (data dependcy between lw and sw)
+        
+        ROM[12]  = 32'b000100_00000000000000000000000010;          //jump (to pc+2 without sll) 
+
+        ROM[13]  = 32'b000011_00100_00100_0000000000000011;        //beq $4,$4,3 (applied)
+                
+        ROM[14]  = 32'b000000_00010_00100_00001_00000_100000;      //add $1,$2,$4              
+        ROM[15]  = 32'b000000_00010_00001_01001_00000_100101;      //or  $9,$2,$1 (data dependcy rt2=rd1)
+        
+        ROM[16]  = 32'b000000_00000_00010_00011_00000_100010;      //sub $3,$0,$2        
+        ROM[17]  = 32'b000010_01001_00011_0000000000000010;        //sw  $3,$9(2) (data dependcy between sw and rtype)
+              
+        ROM[18]  = 32'b000010_00100_00000_0000000000000001;        //sw $0,$4(1)
+
+        ROM[19]  = 32'b000100_00000000000000000000000100;          //jump (to pc+4  without sll)
+        
+        ROM[20] = 32'b000011_00100_00100_0000000000000011;         //beq  $4,$4,3 (applied)
+        
+      
+        //NO-USE INSTRUCTIONS
+        ROM[21] = 32'b00000000000000000000000000000000;        // nop
+        ROM[22] = 32'b00000000000000000000000000000000;        // nop 
+        ROM[23] = 32'b00000000000000000000000000000000;        // nop
+        ROM[24] = 32'b00000000000000000000000000000000;        // nop
+        ROM[25] = 32'b00000000000000000000000000000000;        // nop
+        ROM[26] = 32'b00000000000000000000000000000000;        // nop
+        ROM[27] = 32'b00000000000000000000000000000000;        // nop
+        ROM[28] = 32'b00000000000000000000000000000000;        // nop
+        ROM[29] = 32'b00000000000000000000000000000000;        // nop
+        ROM[30] = 32'b00000000000000000000000000000000;        // nop
+        ROM[31] = 32'b00000000000000000000000000000000;        // nop
+        
+    end
+
+    //Output instruction fetche based on program counter
+    assign im_Instruction = ROM[pc];  
+
+endmodule
+
+//creating registers between stages
+///Register Between IF and Decoder///
+module IF_ID_Reg#(parameter i_size=32,ad_size=32)(
+  input clk,rst,ID_write,IF_flush,        //clock and reset signal for transfering synchoronical and other two for flush
+  input [i_size-1:0] im_Instruction,         //Instruction fetched from Instruction Memory
+  input [ad_size-1:0] pc,                    //Program counter value from Instruction Fetch stage
+  output reg [i_size-1:0] id_Instruction,    //Instruction to pass to ID stage
+  output reg [ad_size-1:0] id_pc
+);
+  always@(posedge clk,posedge rst)
+    begin
+      if(rst==1'b1 ||IF_flush==1'b1)
+        id_Instruction=32'd0;               //Reset or flush: clear the instruction in case of jump and branch
+      else if(ID_write==1'b0)
+        id_Instruction=id_Instruction;      //No write: retain the current instruction in case of stall
+      else     
+        id_Instruction=im_Instruction;      //Write: update the instruction with fetched instruction as normal
+    end
+  
+   //Always block for retaining the pc value to be added for jumpand branch address
+  always@*
+    begin     
+      id_pc=pc;
+    end
+endmodule
+
+//DECODER//
+module Decoder#(parameter i_size=32)(
+  //signals from control unit
+  input clk,rst,
+  //data
+  input [i_size-1:0] id_Instruction,         //Instruction to be decoded
+  
+  output  [5:0] id_function,                 //Function field for R-type instructions that helps indecidng alu operation
+  output  [15:0] id_itype_address,           //Immediate address for I-type instructions and beq
+  output  [25:0] id_jump_address,            //Jump address for J-type instructions
+  output  [4:0] id_rs,id_rt,id_rd,           //Source, target and destination register respectively
+  output [4:0] id_shamt                      //Shift amount for slt operation in rtype
+);
+  
+   //Splitting the 32-bit instruction into its components
+
+  //for R-type instructions
+  assign   id_rs =  id_Instruction [25:21];
+  assign   id_rt =  id_Instruction [20:16];
+  assign   id_rd =  id_Instruction [15:11];
+  assign id_shamt =  id_Instruction [10:6]; 
+  assign id_function =  id_Instruction[5:0];
+    
+    //for I-type instructions 
+  assign  id_itype_address =  id_Instruction [15:0];
+    //for J-type instructions
+  assign  id_jump_address =  id_Instruction [25:0];
+  
+endmodule
+
+///temporary Reg between Decoder and Register file///
+module ID_RF_Reg(
+    input clk,rst,
+  //signals
+  input id_regwrite,id_memtoreg,id_mem_write,id_memread,id_ALUSrc,
+  input id_regdst,id_branch,id_jump,
+  input [1:0] id_ALUOp,
+  
+  //data from decoder
+  input  [5:0] id_function,
+  input  [4:0] id_rs,id_rt,id_rd,id_shamt,
+ 
+  output reg [1:0] acu_ALUOp,                                      //for alu control unit
+  output reg [5:0] acu_function,
+  output reg [4:0] rf_rs,rf_rt,rf_rd,rf_shamt,
+  
+  //output signals
+  output reg rf_regdst,rf_regwrite,rf_memtoreg,rf_ALUSrc,         //for register file
+  output reg rf_mem_write,rf_memread,                             //for data memory
+  output reg rf_branch,pc_jump  
+);
+  //shifting tonext state upon clk
+  always@*
+    begin
+      rf_rs=id_rs;
+      rf_rt=id_rt; 
+      rf_rd=id_rd;
+      rf_ALUSrc=id_ALUSrc;                //ALU source control signal
+      
+      acu_ALUOp=id_ALUOp;
+      
+      rf_shamt= id_shamt;
+      //signals
+      rf_regwrite=id_regwrite;
+      rf_memtoreg=id_memtoreg;             //Memory read control signal for lw
+      rf_mem_write=id_mem_write;           //Memory write control signal for sw
+      rf_memread=id_memread;               //Memory read control signal for lw
+      rf_regdst=id_regdst;        
+      end
+  always@(posedge clk)
+    begin
+        pc_jump=id_jump;                    //Jump control signal
+        rf_branch=id_branch;                //Branch control signal        
+        acu_function=id_function;
+    end
+endmodule
+
+//REGISTER FILE//
+module RegisterFile#(parameter ad_size=32,d_size=32,depth=32)(
+  input clk,rst,rf_ALUSrc,rf_regdst,
+  input [1:0] ForwardA,ForwardB,
+  input [4:0] rf_rs,rf_rt,rf_rd,                      //address from decoder of regfile
+  input [ad_size-1:0] se_un_address,
+  input [d_size-1:0] dm_result,
+  //this is actual output needed from this module
+  output reg [d_size-1:0] rf_in1,rf_in2,rf_dest          // inputs of operation  
+ 
+  );
+
+  reg [d_size-1:0] reg_file [depth-1:0];        // creating REGISTER FILE of 32 bits and depth of 32 bits
+  // Initializing the register file with some predefined values
+initial  
+  begin
+    reg_file[0] = 32'b00000000000000000000000000000000;
+    reg_file[1] = 32'b00000000000000000000000000000101;
+    reg_file[2] = 32'b00000000000000000000000000000110;
+    reg_file[3] = 32'b00000000000000000000000000000111;
+    reg_file[4] = 32'b00000000000000000000000000000100;
+    reg_file[5] = 32'b00000000000000000000000001000001;
+    reg_file[6] = 32'b00000000000000000000000000001000;
+    reg_file[7] = 32'b00000000000000000000000000000101;
+    reg_file[8] = 32'b00000000000000000000000000001011;
+    reg_file[9] = 32'b00000000000000000000000000001001;
+  end
+  
+    //setting in1 and in2 according to the information decoded from  instructions
+  always@(rf_rs,rf_rt,se_un_address,rf_ALUSrc,ForwardA,ForwardB,dm_result) 
+    begin    
+      if(rf_ALUSrc==1'b0 )
+        begin
+          if(ForwardA==2'b01)
+            begin
+              rf_in1 = dm_result;                   //Forwarded value for rf_in1 for rtype dependency
+              rf_in2 = reg_file[rf_rt];
+            end
+          else if(ForwardB==2'b01)
+            begin
+              rf_in1 = reg_file[rf_rs];
+              rf_in2 = dm_result;                   //Forwarded value for rf_in2 for rtype dependency
+            end
+          else
+            begin
+              rf_in1 = reg_file[rf_rs];             //in case of no dependency, Value from register file for rf_in1
+              rf_in2 = reg_file[rf_rt];             //in case of no dependency, Value from register file for rf_in2
+            end
+        end
+      else
+        begin
+           if(ForwardA==2'b01)
+            begin
+              rf_in1 = dm_result;                    //Forwarded value for rf_in1  for itype dependency
+              rf_in2 = se_un_address;
+            end
+          else
+            begin
+              rf_in1 = reg_file[rf_rs];               //in case of no dependency, Value from register file for rf_in1
+              rf_in2 = se_un_address;           
+            end             
+        end
+    end
+  
+  //Sequential block for setting the destination register value on clock edge depending upon regdst signal
+  always@(posedge clk)
+    begin
+      if(rf_regdst)
+        rf_dest=reg_file[rf_rd];                      //for rtype instructions
+      else
+        rf_dest=reg_file[rf_rt];                      //for lw and sw instruction
+    end
+endmodule
+
+///Reguster Between Instruction Decoded Register File and ALU control Unit///
+module RF_ALU_Reg#(parameter d_size=32,ad_size=32)(
+    input clk,rst,
+
+  input [d_size-1:0] rf_in1,rf_in2,rf_dest,
+  
+  //now the signals that are not going tobe used int this module but are just to store
+  input rf_regwrite,rf_memtoreg,rf_mem_write,rf_memread,rf_branch,
+                                       
+  input [5:0] rf_function,                            //for alu control unit
+  input [4:0] rf_shamt,rf_rt,rf_rd,rf_rs,
+  input [ad_size-1:0] se_address,
+  
+  output reg [ad_size-1:0] br_address,
+  output reg alu_regwrite,alu_memtoreg,alu_mem_write,alu_memread,pc_branch,
+  output reg [4:0] alu_shamt,alu_rt,alu_rd,alu_rs,
+  
+  //actual output
+  output reg [d_size-1:0] alu_in1,alu_in2,alu_input   //ALU operands along with data to be stored in memeory 
+);
+    always@(posedge clk)
+    begin
+      alu_in1=rf_in1;             //Transfer first input from register file to ALU
+      alu_in2=rf_in2;             //Transfer second input from register file to ALU
+      
+      //for hazards control trasfering the source, target and destination registers
+      alu_rs=rf_rs;
+      alu_rt=rf_rt;
+      alu_rd=rf_rd;
+      
+      alu_input=rf_dest;           //data to be saved in memory upon sw
+    end
+   //transfer excess signal
+  always@(posedge clk)
+    begin
+      
+      //data
+      alu_shamt=rf_shamt;
+      br_address=se_address;         //Transfer sign-extended immediate address to Program Counter
+
+      //signals
+      pc_branch=rf_branch;            //as this signal and alu_zero will lead to staright away branch
+      alu_regwrite=rf_regwrite;
+      alu_memtoreg= rf_memtoreg;
+      alu_mem_write=rf_mem_write;
+      alu_memread=rf_memread;
+    end
+
+endmodule
+
+//ALU CONTROL UNIT//
+module ALUControlUnit#(parameter ad_size=32,d_size=32)(
+  input clk,rst,
+  input [1:0] acu_ALUOp,                           //ALU operation code from the control unit
+  input [5:0] acu_function,                        //Function field from the instruction
+  
+  
+  //ALU operation code to be passed to the ALU for checking whether its rypeitype address or beq zero fllag
+  output reg [1:0] alu_op,                         
+  output reg [3:0] alu_opcode                      //ALU opcode to control ALU operations
+);
+  reg [3:0] alu_opcode1;                           // Intermediate variable to store ALU opcode
+  always@*
+    begin
+      case(acu_ALUOp)
+        2'b00: alu_opcode1=4'b0010;         //lw and store word because rs gets added with immediate address
+        2'b01: alu_opcode1=4'b0110;         //beq
+        2'b10:                              //rtype
+        begin
+          case(acu_function)
+            6'b100000: alu_opcode1=4'b0010;  //ADD
+            6'b100010: alu_opcode1=4'b0110;  //SUB
+            6'b100100: alu_opcode1=4'b0000;  //AND
+            6'b100101: alu_opcode1=4'b0001;  //OR
+            6'b101010: alu_opcode1=4'b0111;  //SLT
+          endcase
+        end     
+      endcase
+    end
+  
+always@*
+  begin
+    alu_opcode = alu_opcode1;                      //Assign intermediate opcode to output for alu operations
+  end
+  
+  always@(posedge clk)
+    begin
+        alu_op = acu_ALUOp;                        //Update alu_op with the input ALU operation code        
+    end
+ 
+endmodule
+
+//ALU/EXECUTION//
+module ALU#(parameter ad_size=32,d_size=32)(
+  input clk,rst,
+  input [1:0] alu_op,
+  input [d_size-1:0] alu_in1,alu_in2,               //alu operands
+  input [3:0] alu_opcode,                           //alu operation to be performed
+  input [4:0] alu_shamt,                            //for shifting
+  
+  output reg alu_zero,                              //zero flag for beq instructions                              
+  output reg [d_size-1:0] dm_result,                //R-type result to be stored here intermediately
+  output reg [ad_size-1:0] dm_itype_address         //I-type address for memory acccess
+);
+  //intermediate result which is then trasfered to required output according to alu_op
+  reg [d_size-1:0] alu_result;                      
+   
+  //alu performing functions
+  always@*
+  begin  
+    case(alu_opcode)
+      4'b0010: alu_result=alu_in1+alu_in2;
+      4'b0110: alu_result=alu_in1-alu_in2;
+      4'b0000: alu_result=alu_in1&alu_in2;
+      4'b0001: alu_result=alu_in1|alu_in2;
+      4'b0111: alu_result=alu_in1<<alu_shamt;
+    endcase
+  end
+ 
+   //Determining the outputs based on alu_op
+  always@*
+    begin
+      if(alu_op==2'b00)
+        dm_itype_address = alu_result;                 //For I-type instructions, address result
+      else if(alu_op==2'b10)
+        dm_result = alu_result;                        //For R-type instructions 
+        alu_zero = (alu_result==0)?1:0;                // For branch operations, set zero flag
+    end
+
+endmodule
+
+//temporary register between alu and data memory
+module EX_MEM_Reg#(parameter ad_size=32,d_size=32)(
+  input clk,rst,
+  input EX_flush,                         //flush  signal in case of beq
+  input [4:0] alu_rd,
+  
+  input alu_regwrite,alu_memtoreg,alu_mem_write,alu_memread,
+  input [ad_size-1:0] dm_itype_address,
+  input [d_size-1:0] alu_input,            
+  
+  output reg [d_size-1:0] dm_data_input,   //data to be stored in memory
+  output reg [ad_size-1:0] mem_address,    //memory address
+  output reg dm_regwrite,dm_memtoreg,dm_mem_write,dm_memread,       //signals for register file and memory respectively 
+  output reg [4:0] dm_rd                   //for checking data hazards   
+
+);
+  //excessive transfering of signals  as data from behind ends here but from here new data starts
+  // Sequential logic to update the outputs on the rising edge of the clock
+  always@(posedge clk)
+    begin
+      if(EX_flush==1'b1)
+        begin
+          //If EX_flush is asserted, reset the control signals to avoid writing incorrect data
+           dm_regwrite = 1'b0;
+           dm_memtoreg = 1'b0;
+           dm_mem_write = 1'b0;
+           dm_memread = 1'b0;
+        end
+      else
+        begin
+           //Otherwise, pass the control signals and data to the next pipeline stage
+           dm_regwrite = alu_regwrite;
+           dm_memtoreg = alu_memtoreg;
+           dm_mem_write = alu_mem_write;
+           dm_memread = alu_memread;
+           dm_rd=alu_rd;
+           dm_data_input=alu_input;
+        end
+    end
+  
+  //Combinational logic to update the memory address
+always@*
+  begin
+     mem_address=dm_itype_address;
+  end
+endmodule
+
+//DATA MEMORY//
+module DataMemory#(parameter d_size=32,ad_size=32,depth=32)(
+  input clk,rst,dm_mem_write,dm_memread,                        //signals for read and write from memory         
+  input [d_size-1:0] dm_data_input,                             //ALU result in case of save word command
+  input [ad_size-1:0] mem_address,                              //address from instruction for lw,sw command-constant+rs
+  
+  output reg [d_size-1:0] dm_Memory_out_Data                    //output by load word command
+);
+  reg[d_size-1:0] data_mem [depth-1:0];                         //initiating the DATA MEMORY
+  reg [d_size-1:0] dm_Memory_out_Data1;                         //intermediate data fetched from memory location at given address
+  reg [d_size-1:0] data_in_mem;                                 //register data that gets stored in memory upon sw
+
+ //Initialize data memory with some values
+initial
+  begin
+    data_mem[0]=32'b 0000000000000000000000000000001;
+    data_mem[1]=32'b 0000000000000000000000000000010;
+    data_mem[2]=32'b 0000000000000000000000000000011;
+    data_mem[3]=32'b 0000000000000000000000000000000;
+    data_mem[4]=32'b 0000000000000000000000000000100;
+    data_mem[5]=32'b 0000000000000000000000000000001;
+    data_mem[6]=32'b 0000000000000000000000000000110;
+    data_mem[7]=32'b 0000000000000000000000000000111;
+    data_mem[8]=32'b 0000000000000000000000000000111;
+    data_mem[12]=32'b 0000000000000000000000000000111;
+    data_mem[16]=32'b 0000000000000000000000001000111;
+
+end
+  
+  always@(dm_memread,dm_mem_write,mem_address,dm_data_input)
+  begin
+    if (dm_memread==1'b1)                                          //If memory read is enabled
+      dm_Memory_out_Data1 <= data_mem[mem_address];                //load value from address 
+    else if (dm_mem_write==1)                                      //If memory write is enabled
+      data_mem[mem_address]<= dm_data_input;                       //save value in memory address
+  end  
+  
+  // Sequential logic to update internal signals on the rising edge of the clock
+  always@(posedge clk)    
+    begin
+      dm_Memory_out_Data=dm_Memory_out_Data1;                       //Output data to be moved to register file
+      data_in_mem = dm_data_input;                                  //Store data input in a different varriable to ensure operation
+    end
+  
+endmodule
+
+///temporary register between memory and write back///
+module MEM_WB_Reg#(parameter d_size=32,ad_size=32)(
+  //extra signals to be transfered
+  input clk,
+  input  dm_regwrite,dm_memtoreg,                    //signals from memory 
+  input [d_size-1:0] dm_result,
+  input dm_memread,                                   
+  input EX_flush,                                     //execution flush 
+  input [4:0] dm_rd,
+  
+  output reg [d_size-1:0] rb_result,
+  output reg rb_regwrite,rb_memtoreg,rb_memread,      //Control signals to trasfer data from memory to regfile
+  output reg [4:0] rb_rd
+);
+
+  always@*
+    begin
+      // Hazard control - in case of branch/jump hazards, reset WB, MEM and EX control signals to 0 
+      if (EX_flush == 1)
+        begin
+            rb_regwrite <= 1'b0;
+            rb_memtoreg <= 1'b0;
+            rb_memread <= 1'b0;
+        end
+      else
+        begin
+           // Transfer control signals from data memory stage to write back stage
+           rb_regwrite <= dm_regwrite;
+           rb_memtoreg <= dm_memtoreg;
+           rb_memread <= dm_memread;
+
+           // Transfer destination register address from data memory stage to write back stage           
+           rb_rd=dm_rd;
+        end
+    end
+  
+  //Sequential logic to transfer data result from ALU to be write back stage to be stored in register file on clock edge
+  always@(posedge clk)
+    begin
+           rb_result = dm_result;
+    end
+endmodule
+
+//WRITE BACK REGISTER//
+module WriteRegister#(parameter d_size=32,ad_size=32)(
+  input clk,rst,rb_memtoreg,rb_memread,rb_regwrite,               //signals to help in writing in register file
+  input [d_size-1:0] dm_Memory_out_Data,rb_result,                //Result from memory and ALU  to write back stage
+  
+  //the final output displaying the data stored in registe file
+  output reg[d_size-1:0] DATA                                        
+);
+  reg [d_size-1:0] data;                                //Internal register to hold data
+  
+  //combinational logic
+  always@*
+    begin
+      if(rb_regwrite)
+        begin
+          if(rb_memread || rb_memtoreg)                 // If memory-to-register is enabled, write data from data memory
+            data=dm_Memory_out_Data;
+          else
+             data=rb_result;                            // Otherwise, write the result from memory write back stage
+        end
+    end
+  
+  //on next clock cycle the data is stored in register file namely DATA
+  always@(posedge clk)
+    begin
+      DATA=data;
+    end
+
+endmodule
+
+//JUMP MODULE//
+module Jump_Check#(parameter ad_size=32)(
+  input clk,
+  input  [25:0] id_jump_address,                      //Jump address from the instruction
+  input [ad_size-1:0] id_pc,                          //Program counter value when this instruction was fetched
+  
+  output reg [ad_size-1:0] j_address                  //Calculated jump address for pc to jump upon signals
+);
+  wire [ad_size-1:0]  j_addr;                         //Wire to hold shifted jump address
+  
+  assign j_addr = id_jump_address<<2;                 // Shift the jump address left by 2 bits
+ 
+  //Calculate the jump address on the rising edge of the clock
+  always@(posedge clk)
+    begin
+      //Add the shifted jump address to the current program counter value
+      j_address = id_pc + j_addr;                       
+    end
+  
+endmodule
+
+//SIGN EXTENSION MODULE FOR I-TYPE//
+module Sign_Extend#(parameter ad_size=32)(
+  input clk,
+  input [15:0] id_itype_address,                                       //I-type address from the instruction
+  input [ad_size-1:0] id_pc,                                           //PC value retained when instruction fetched
+  
+  output reg [ad_size-1:0] br_pc,                                      //PC value trasfered to be added for branch 
+  output reg [ad_size-1:0] se_un_address                               //Sign-extended I-type address            
+);
+  reg [ad_size-1:0] i_addr;                                            //Register for sign-extended I-type address
+  
+  // Sign extension logic
+  always@*
+    begin
+      if(id_itype_address[15]==1)                                      //If the sign bit is 1, sign-extend with ones
+        i_addr = {{16{id_itype_address[15]}},id_itype_address[15:0]};
+      else                                                             //If the sign bit is 0, sign-extend with zeros
+        i_addr = {{16'b0},id_itype_address[15:0]};
+    end
+  
+  always@*
+    begin
+      se_un_address=i_addr;                                             //Output the sign-extended I-type address
+      br_pc=id_pc;                                                      //Output the program counter value for branch 
+    end
+  
+endmodule
+
+//TO LEFT SHIFT THE BRANCH ADDRESS BY TWO//
+module Left_Shift_Branch#(parameter ad_size=32) (
+  input clk,
+  input [ad_size-1:0] se_un_address,br_pc,                //Sign-extended I-type address and retained pc value
+  
+  output reg [ad_size-1:0] se_address                     //Shifted and added I-type address for branch
+
+);
+  //Shift and add logic
+  always@(posedge clk)
+    begin
+      //Shift the I-type address left by two bits and add it to the branch program counter
+     se_address=br_pc+{se_un_address[29:0],2'b00};
+    end
+  
+endmodule
+
+//CONTROL UNIT//
+module Control#(parameter i_size=32)(
+  input clk, rst,
+  // Hazard control signals - lw, beq
+  input ID_flush_lw_stall, ID_flush_branch,
+  
+  input [i_size-1:0] id_Instruction,                // Input instruction
+  
+  //output signals generated according to instruction type
+  output reg id_regwrite,id_memtoreg,id_mem_write,id_memread,id_ALUSrc,
+  output reg id_regdst,id_jump,id_branch,
+  output reg [1:0] id_ALUOp
+);
+      
+  //setting the opcode according to our processor demands
+  reg[5:0] rtype=6'd0,beq=6'd3,jump=6'd4;
+  reg[5:0] itype_lw=6'd1,itype_sw=6'd2;
+  
+   //Extract opcode from instruction to generate signals
+  wire [5:0] cu_opcode;
+  assign cu_opcode=id_Instruction[31:26];
+  
+  //set the output control signals according to opcode
+  //output logic
+  always @* 
+   begin
+     if(rst==1'b1||ID_flush_lw_stall==1'b1 ||ID_flush_branch==1'b1)
+        begin
+          //Reset control signals in case of reset or hazard
+              id_memread=1'b0;
+              id_ALUSrc=1'b0;
+              id_ALUOp=2'b00;
+              id_regwrite=1'b0;
+              id_regdst=1'b0;
+              id_memtoreg=1'b0;
+              id_mem_write=1'b0;
+              id_branch=1'b0;
+              id_jump=1'b0;
+        end
+      else
+        begin
+          //Set control signals based on opcode
+      case(cu_opcode)
+        //rtype
+          rtype: 
+            begin 
+              id_memread=1'b0;
+              id_ALUSrc=1'b0;
+              id_ALUOp=2'b10;
+              id_regwrite=1'b1;
+              id_regdst=1'b1;
+              id_memtoreg=1'b0;
+              id_mem_write=1'b0;
+              id_branch=1'b0;
+              id_jump=1'b0;
+            end
+        //for itype
+          itype_lw: 
+            begin
+              id_memread=1'b1;
+              id_ALUSrc=1'b1;
+              id_ALUOp=2'b00;
+              id_regwrite=1'b1;
+              id_regdst=1'b0;
+              id_memtoreg=1'b1;
+              id_mem_write=1'b0;
+              id_branch=1'b0;
+              id_jump=1'b0;
+          end
+        
+          itype_sw: 
+            begin
+              id_memread=1'b0;
+              id_ALUSrc=1'b1;
+              id_ALUOp=2'b00;
+              id_regwrite=1'b1;
+              id_regdst=1'b0;
+              id_memtoreg=1'b0;
+              id_mem_write=1'b1;
+              id_branch=1'b0;
+              id_jump=1'b0;
+          end
+        //for beq
+          beq:
+            begin
+              id_memread=1'b0;
+              id_ALUSrc=1'b0;
+              id_ALUOp=2'b01;
+              id_regwrite=1'b0;
+              id_regdst=1'b0;
+              id_memtoreg=1'b0;
+              id_mem_write=1'b0;
+              id_branch=1'b1;
+              id_jump=1'b0;
+          end
+        //for jump
+          jump: 
+            begin
+              id_memread=1'b0;
+              id_ALUSrc=1'b0;
+              id_ALUOp=2'b11;
+              id_regwrite=1'b0;
+              id_regdst=1'b0;
+              id_memtoreg=1'b0;
+              id_mem_write=1'b0;
+              id_branch=1'b0;
+              id_jump=1'b1;
+          end     
+      endcase
+        end
+  end
+  
+endmodule
+
+///////////////////////////////////HAZARDS CHECK AND CONTROL MODULES//////////////////////////////
+
+//FORWADING MODULE//
+module Forward_Unit(
+  input dm_mem_write,                         //Memory write signal for sw
+  input [4:0] rf_rt,rf_rs,                    //of instruction 2  for rtype and lw
+  input [4:0] alu_rd,                         //of instruction 1  for rtype
+  input [4:0] alu_rt,                         //for sw and lw dependency
+  
+  output reg [1:0] ForwardA, ForwardB         // Forwarding signals for operand rs and operand rt respectively
+);
+
+  wire equal_RFALU_rs,equal_RFALU_rt,nonzero_RFALU_rd;          //Signals for dependency between R-type instructions
+  wire equal_Itype_rs,equal_Itype_rt;                           //Signals for dependency between lw  and sw
+  
+  //Check if the destination register of the first ALU instruction matches with the source registers of the second instruction
+  assign equal_RFALU_rs=(rf_rs==alu_rd)?1:0;        //if rd of instruction 1 is used as rs of intruction 2
+  assign equal_RFALU_rt=(rf_rt==alu_rd)?1:0;        //if rd of instruction 1 is used as ry of intruction 2
+ 
+  //Check if the source registers of the Load instruction match with the destination register of the Store instruction
+  assign equal_Itype_rs=(rf_rs==alu_rt)?1:0;        //if rt of lw is used as rs of sw
+  assign equal_Itype_rt=(rf_rt==alu_rt)?1:0;        //if rt of lw 1 is used as rt of sw
+  
+   //Hazard condition - Avoid forwarding a nonzero result value if the destination register is $0
+  assign nonzero_RFALU_rd = (alu_rd == 0) ? 0 : 1;
+  
+  //Determine forwarding signals for operand rs and operand rt to be declared in register files 
+  always@*
+    begin
+        ForwardA=2'b00;
+        ForwardB=2'b00;
+      if((equal_RFALU_rs & nonzero_RFALU_rd) || (equal_Itype_rs & dm_mem_write))
+        ForwardA=2'b01;                          //rs
+      else if(equal_RFALU_rt & nonzero_RFALU_rd || (equal_Itype_rt & dm_mem_write))
+        ForwardB=2'b01;                           //rt
+    end
+
+endmodule
+
+//STALL FOR LOAD WORD//
+module LW_Stall(
+  input alu_memread,clk,
+  input [4:0] id_rs,id_rt,alu_rt,
+  output reg PC_write,ID_write,
+  output reg ID_flush_lw_stall
+);
+  
+  always@(posedge clk)
+    begin
+  //If there's a memory read operation and the destination register matches one of the source registers in the ID stage,
+      if(alu_memread && (alu_rt == id_rs || alu_rt == id_rt))
+        begin 
+          //stall the pipeline by preventing PC and ID updates, and flush the instruction in the ID stage
+            PC_write = 0;                      //Prevent updating the Program Counter
+            ID_write = 0;                      //Prevent writing to the Instruction Register
+            ID_flush_lw_stall = 1;             //Set the flag to flush the instruction in the ID stage
+        end
+       else 
+        begin 
+          //If no stall condition is met, allow normal operation
+            PC_write = 1;
+            ID_write = 1;
+            ID_flush_lw_stall=0; 
+        end
+    end
+  
+endmodule
+
+//CONTROL HAZARD FOR BRANCH AND JUMP//
+module Branch_Jump_Hazard_Unit(
+    input clk,
+    input pc_branch,alu_zero,id_jump, 
+  
+    output reg IF_flush,ID_flush_branch,EX_flush
+);
+
+  always @(posedge clk)
+    begin
+      //If the branch condition is met and the ALU result is zero, indicating a branch taken, then flush the IF, ID, and EX stages
+      if(pc_branch==1'b1 && alu_zero==1'b1)
+        begin 
+            IF_flush = 1;                                  //for If stage    
+            ID_flush_branch = 1;                           //for ID stage
+            EX_flush =1;                                   //for ALU stage
+        end
+      else if(id_jump==1'b1)
+        begin
+          //If a jump instruction is detected, flush the IF and ID stages
+          //vecause jumps completes in 3 cycle so till that new instruction was not able to reach execution stage
+          //that why there are only two flushes
+            IF_flush = 1;      
+            ID_flush_branch = 1; 
+        end
+        else 
+        begin 
+          //If no hazard condition is met, reset all flush flags
+            IF_flush = 0; 
+            ID_flush_branch = 0; 
+            EX_flush = 0; 
+        end
+    end
+  
+endmodule
+
+/////CREATING A MODULE TO CHOOSE WHICH OF STAGES IS TO BE DISPLAYED ON FPGA/////
+module CHOOSE_OUTPUT#(i_size=32,ad_size=32,d_size=32)(
+  input [ad_size-1:0] pc,                             //Program counter input
+  input [i_size-1:0] im_Instruction,                  //Input from instruction fetch stage
+  input [i_size-1:0] id_Instruction,                  //Input from instruction decode stage 
+  input [d_size-1:0] DATA,                            //Data input written on register file upon rtype and lw
+  
+  //select button
+  input [1:0]  sel_out,                               //Select signal input proceesed from fpga switches
+  
+  //Output to be displayed on fpga seven segment through multiplexing
+  output reg [d_size-1:0] OUT                         
+);
+  //Selects the output based on the select signal
+  always@*
+    begin
+      case(sel_out)
+          2'b00: OUT = pc;                             //If sel_out is 00, output pc
+          2'b01: OUT = im_Instruction;                 //If sel_out is 01, output Instruction Fetch
+          2'b10: OUT = id_Instruction;                 //If sel_out is 10, output instruction Decode
+          2'b11: OUT = DATA;                           //If sel_out is 11, output data
+        endcase
+    end
+  
+endmodule
+
+//////////////////////SEVEN SEGMENT MULTIPLEXING UNNIT////////////////////////////
+
+///SEVEN SEGMENT DISPLAY TO DISPLAY ON FPGA///
+module sevensegment(
+  input clk1,                                  //Clock input for refreshing display
+  input sw,                                    //Switch input for selecting between 16-bit segments
+  input [31:0] DATA,                           //32-bit input data from choose-output module to be displayed
+  
+  output [6:0] seg,                            //Output representing the 7-segment display segments
+  output [3:0] an                              //Output representing the common anode signals for multiplexing
+);
+  
+  reg [3:0] sw1,sw2,sw3,sw4;                   //Registers to store segmented input data
+  wire [6:0] seg0, seg1, seg2, seg3;           //Wires to store segmented output data
+  
+  //coverting the 16-bit input into 4 4-bits number   
+  //Slice the input number into four 4-bit segments based on switch selection
+	 always@(*) begin
+	 case(sw)
+	 1'b0: begin
+       sw1 = DATA[3:0]; 
+       sw2 = DATA[7:4]; 
+       sw3 = DATA[11:8]; 
+       sw4 = DATA[15:12]; 
+	 end
+	 1'b1: begin
+	   sw1 = DATA[19:16];
+       sw2 = DATA[23:20];
+       sw3 = DATA[27:24];
+       sw4 = DATA[31:28];
+     	 end
+	 endcase
+	 end
+
+  //Instantiate sseg_display module for each segmented input data
+  //converting the 4-bit number to display it on seven segment display
+  sseg_display s0(.hex(sw1), .seg(seg0));     
+  sseg_display s1(.hex(sw2), .seg(seg1));     
+  sseg_display s2(.hex(sw3), .seg(seg2));     
+  sseg_display s3(.hex(sw4), .seg(seg3));      
+ 
+  //callinng the module to display the number on fpga
+  sseg_mux display(.clk1(clk1), .rst(1'b0), .dig0(seg0), .dig1(seg1), .dig2(seg2), .dig3(seg3), .an(an), .sseg(seg)); 
+  
+endmodule
+
+//Doing the time multiplexing on our output
+module sseg_mux(
+  input clk1, rst,  
+  input [6:0] dig0, dig1, dig2, dig3,                //Inputs representing 7-segment display data for each digit
+  
+  output reg [3:0] an,                               //Output representing the common anode signals for multiplexing
+  output reg [6:0] sseg                              //Output representing the 7-segment display data
+);
+  
+  //refresh rate of ~1526Hz (100 MHz / 2^16)
+  localparam BITS = 18; 
+  
+  wire [BITS - 1 : 0] q;                                //Counter to cycle through each digit for multiplexing
+  
+  // Instantiate the counter module
+  counter_n #(.BITS(BITS)) counter(.clk1(clk1), .rst(rst), .q(q)); 
+  
+    //Multiplex the inputs based on the counter value      
+    always @* 
+      case (q[BITS - 1 : BITS - 2])
+            2'b00:
+                begin
+                    an = 4'b1110;                       //Activate digit 0
+                    sseg = dig0;                        //Output data for digit 0
+                end
+            2'b01:
+                begin
+                    an = 4'b1101;                       //Activate digit 1
+                    sseg = dig1;                        //Output data for digit 1
+                end
+            2'b10:
+                begin
+                    an = 4'b1011;                       //Activate digit 2
+                    sseg = dig2;                        //Output data for digit 2
+                end
+            default:
+                begin
+                    an = 4'b0111;                       //Activate digit 3
+                    sseg = dig3;                        //Output data for digit 3
+                end
+        endcase   
+endmodule
+
+// seven-segment digit display driver
+module sseg_display (
+  input [3:0] hex,                         //Input representing a hexadecimal digit
+  output reg [6:0] seg                     //Output representing the segments to display on FPGA
+);   
+    always @* 
+      begin
+        //Display the input digit on the seven-segment display
+        case(hex)
+            4'h0: seg[6:0] = 7'b1000000;    // digit 0
+            4'h1: seg[6:0] = 7'b1111001;    // digit 1
+            4'h2: seg[6:0] = 7'b0100100;    // digit 2
+            4'h3: seg[6:0] = 7'b0110000;    // digit 3
+            4'h4: seg[6:0] = 7'b0011001;    // digit 4
+            4'h5: seg[6:0] = 7'b0010010;    // digit 5
+            4'h6: seg[6:0] = 7'b0000010;    // digit 6
+            4'h7: seg[6:0] = 7'b1111000;    // digit 7
+            4'h8: seg[6:0] = 7'b0000000;    // digit 8
+            4'h9: seg[6:0] = 7'b0010000;    // digit 9
+            4'ha: seg[6:0] = 7'b0001000;    // digit A
+            4'hb: seg[6:0] = 7'b0000011;    // digit B
+            4'hc: seg[6:0] = 7'b1000110;    // digit C
+            4'hd: seg[6:0] = 7'b0100001;    // digit D
+            4'he: seg[6:0] = 7'b0000110;    // digit E
+            default: seg[6:0] = 7'b0001110; // digit F
+        endcase
+    end
+endmodule
+
+module counter_n #(parameter BITS = 32) (
+    input clk1,                                 //clock input for seven segment
+    input rst,
+    output reg [BITS - 1:0] q                   //Counter output
+);
+    // Initialize the counter register
+  always @ (posedge clk1, posedge rst) 
+    begin
+        if (rst) 
+          begin
+            q <= 0;                              //Reset counter to 0 when the reset signal is asserted
+        end 
+      else
+        begin
+            q <= q + 1;                          //Increment counter on each rising edge of the clock signal
+        end
+    end
+   
+endmodule
+
+
+
+
