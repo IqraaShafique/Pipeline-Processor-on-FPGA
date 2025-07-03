@@ -1,0 +1,166 @@
+//COMPLETE PIPELINE MODULE//
+module Pipeline#(parameter d_size = 32,ad_size=32)(
+  input clk, rst,                  // Clock and reset signals
+  input sw,clk1,                   //switch to check 32 bit num in 2 chunks of 16 16 bits and clk1 for fpga
+  input [1:0] sel_out,             //Selection signal for choosing output
+  
+  output  [6:0] seg,               //Seven-segment display segments
+  output  [3:0] an                 //Seven-segment display anodes
+);
+  
+    // Wires to connect different modules
+  //........................SIGNALS FROM CONTROL UNIT........................//
+  wire id_regwrite, id_memtoreg, id_mem_write, id_memread, id_ALUSrc, id_regdst, id_jump, id_branch;
+  wire [1:0] id_ALUOp;
+  wire [5:0] id_function;
+  
+   //signals trasfered to register file state
+  wire rf_regdst, rf_regwrite, rf_memtoreg, rf_ALUSrc, rf_mem_write, rf_memread, rf_branch;
+  wire [1:0] rf_ALUOp;
+  wire [5:0] rf_function;
+  
+   //signals trasfered to ALU state
+  wire alu_regwrite, alu_memtoreg, alu_mem_write, alu_memread, alu_jump, alu_branch;
+  wire [1:0] acu_ALUOp,alu_op;
+  wire [5:0] acu_opcode,acu_function;
+  
+  //signals trasfered to Memory stage
+  wire dm_regwrite, dm_memtoreg, dm_mem_write, dm_memread, dm_branch;
+  
+  //signals trasfered to Writeback state
+  wire rb_regwrite, rb_memtoreg, rb_memread;
+  
+  //signals for pc increment
+  wire rb_branch,pc_branch,pc_jump;
+  wire alu_zero;
+  
+  //.............................SIGNALS FOR HAZARDS.............................//
+  //Flushing signals
+  wire ID_flush_lw_stall,ID_flush_branch,EX_flush,IF_flush,PC_write,ID_write;
+  
+  //forwarding signals
+  wire [1:0] ForwardA,ForwardB;
+  
+  //variables needed for hazard detection
+  wire [4:0] rb_rd,alu_rs,alu_rd,acu_rd,dm_rd,alu_rt,acu_rt,dm_rt;
+  
+  //..........................SIGNALS FOR ALU OPERATIONS..........................//
+  wire [3:0] alu_opcode,alu_opcode1;
+  wire [d_size-1:0] alu_in1,alu_in2;
+  
+  //..............................DATA TRASFEEREABLE..............................//
+  wire [4:0] rf_rs,rf_rt, rf_rd,rf_shamt,alu_shamt,acu_shamt,id_rs,id_rt,id_rd,id_shamt,rb_rt;
+  wire [d_size-1:0] rf_in1,rf_in2;
+  
+  //........................ADDRESS FOR I-TYPE INSTRUCTIONS........................//
+  wire [15:0] se_itype_address,id_itype_address;
+  wire [ad_size-1:0] se_un_address,mem_address,dm_itype_address;
+  
+  //.........................ADDRESS FROM JUMP INSTRUCTION.........................//
+  wire [25:0] id_jump_address;
+  wire [ad_size-1:0] j_address;
+  
+  //........................ADDRESSES FOR BRANCH INSTRUCTION........................//
+  wire [ad_size-1:0] se_address,br_address;
+  
+  //..................................INSTRUCTIONS..................................//
+  wire [d_size-1:0] im_Instruction,id_Instruction;
+  
+  //................................PROGRAM COUNTER.................................//
+  wire [d_size-1:0] pc,id_pc,br_pc;
+  
+  //................................DATA FOR MEMORY................................//  
+  wire [d_size-1:0] dm_data_input,alu_input,dm_Memory_out_Data,rf_dest;
+  
+  //...............................R-TYPE ALU RESULT...............................//
+  wire [d_size-1:0] rb_result,dm_result; 
+  
+  //.............................FINAL OUTPUT AND DATA.............................//
+  wire [d_size-1:0] OUT,DATA;
+  
+  
+ //...................................MODULE INSTANTIATION.........................//
+  
+ //Program Counter module for managing program flow
+ Program_Counter #(32,32) prog(clk,rst,PC_write,IF_flush,pc_jump,pc_branch,alu_zero,j_address,br_address,pc);
+ 
+ //Instruction Memory module for fetching instructions
+ Instruction_Memory #(32,32,32) im(clk, rst, pc, im_Instruction);
+ 
+ //Transfer of Fetched Instruction and Decode Register module
+ IF_ID_Reg #(32,32) if_id(clk,rst,ID_write,IF_flush,im_Instruction,pc,id_Instruction,id_pc);
+  
+  //Instruction Decoder for extracting instruction details
+ Decoder #(32) dec(clk,rst,id_Instruction,id_function,id_itype_address,id_jump_address,id_rs,id_rt,id_rd,id_shamt);
+  
+ //Control Unit for determining instruction operation and generating signals accordingly
+ Control #(32) con(clk, rst,ID_flush_lw_stall,ID_flush_branch,id_Instruction,id_regwrite,id_memtoreg,id_mem_write,
+                   id_memread,id_ALUSrc,id_regdst,id_jump,id_branch,id_ALUOp);
+  
+ //Transfer of decoded modules to regfile and others module
+ ID_RF_Reg  id_rf(clk,rst,id_regwrite,id_memtoreg,id_mem_write,id_memread,id_ALUSrc,id_regdst,id_branch,id_jump,id_ALUOp,
+                  id_function,id_rs,id_rt,id_rd,id_shamt,acu_ALUOp,acu_function,rf_rs,rf_rt,rf_rd,rf_shamt,rf_regdst,
+                  rf_regwrite,rf_memtoreg,rf_ALUSrc,rf_mem_write,rf_memread,rf_branch,pc_jump);
+
+  //Register File module for register operations and getting values from required register files
+  RegisterFile #(32) rf(clk,rst,rf_ALUSrc,rf_regdst,ForwardA,ForwardB,rf_rs,rf_rt,rf_rd,se_un_address,dm_result,rf_in1,
+                        rf_in2,rf_dest);  
+  
+  //Register File and ALU Register module for ALU ans ACU operations
+  RF_ALU_Reg #(32,32) rf_alu_reg(clk,rst,rf_in1,rf_in2,rf_dest,rf_regwrite,rf_memtoreg,rf_mem_write,rf_memread,
+                                 rf_branch,rf_function,rf_shamt,rf_rt,rf_rd,rf_rs,se_address,br_address,alu_regwrite,
+                                 alu_memtoreg,alu_mem_write,alu_memread,pc_branch,alu_shamt,alu_rt,alu_rd,alu_rs,
+                                 alu_in1,alu_in2,alu_input);
+ 
+ //ALU Control Unit for determining ALU operation 
+ ALUControlUnit #(32,32) acu(clk,rst,acu_ALUOp,acu_function,alu_op,alu_opcode);
+  
+ //ALU module for arithmetic and logical operations and deciding whether to transfer to as address of result to be stored in register file
+ ALU #(32,32)  alu(clk,rst,alu_op,alu_in1,alu_in2,alu_opcode,alu_shamt,alu_zero,dm_result,dm_itype_address);
+  
+  //Execution/Memory Register for storing data between stages
+  EX_MEM_Reg #(32,32)  ex_mem(clk,rst,EX_flush,alu_rd,alu_regwrite,alu_memtoreg,alu_mem_write,alu_memread,
+                              dm_itype_address,alu_input,dm_data_input,mem_address,dm_regwrite,dm_memtoreg,dm_mem_write,
+                              dm_memread,dm_rd);
+  
+  //Data Memory module for data storage and retrieval
+  DataMemory #(32,32,32) dm(clk,rst,dm_mem_write,alu_memread,dm_data_input,mem_address,dm_Memory_out_Data);
+  
+  //Memory/WriteBack Register for storing data and handling memory write operations
+ MEM_WB_Reg #(32,32)  memtoreg(clk,dm_regwrite,dm_memtoreg,dm_result,dm_memread,EX_flush,dm_rd,rb_result,rb_regwrite,
+                               rb_memtoreg,rb_memread,rb_rd);
+
+ //Write Register module for handling register write operations
+ WriteRegister #(32,32) rb(clk,rst,rb_memtoreg,rb_memread,rb_regwrite,dm_Memory_out_Data,rb_result,DATA);
+  
+  ////JUMP AND BRANCH MODULE CHECK////
+  
+ //Jump Check module for managing jump instructions 
+ Jump_Check #(32) jmp(clk, id_jump_address, id_pc,j_address);
+ 
+ //Sign Extension module for I-type instructions
+ Sign_Extend #(32)  se(clk, id_itype_address, id_pc,br_pc,se_un_address);
+  
+ //Left Shift Branch module for left shifting branch address
+ Left_Shift_Branch #(32) lsb(clk,se_un_address,br_pc,se_address);
+  
+  ////HAZARD CONTROL MODULES////
+  
+  //Branch and Jump Hazard Unit for handling branch and jump hazards
+  Branch_Jump_Hazard_Unit bjhu(clk,pc_branch,alu_zero,id_jump,IF_flush,ID_flush_branch,EX_flush);
+  
+  //Load Word Stall module for handling load word stalls
+  LW_Stall lws(rf_memread,clk,id_rs,id_rt,alu_rt,PC_write,ID_write,ID_flush_lw_stall);
+
+  // Forwarding Unit for handling data forwarding
+  Forward_Unit fu(dm_mem_write,rf_rt,rf_rs,alu_rd,alu_rt, ForwardA, ForwardB);
+
+  /////DISPLAYING ON FPGA///////
+  
+  //Output selection module for choosing output
+  CHOOSE_OUTPUT #(32,32,32)  ch_out(pc,im_Instruction,id_Instruction, DATA,sel_out,OUT);
+  
+  //Seven-segment display module
+  sevensegment ssd(clk1,sw,OUT,seg,an);
+  
+endmodule
